@@ -56,6 +56,55 @@ def fetch_latest_news(rss_url="https://news.pts.org.tw/xml/newsfeed.xml"):
         print(f"抓取 RSS 發生錯誤: {e}")
         return None
 
+def fetch_all_news(rss_url="https://news.pts.org.tw/xml/newsfeed.xml"):
+    """
+    抓取 RSS Feed，並返回所有新聞的列表 (每個元素包含標題、連結、發布時間、摘要)
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    try:
+        response = requests.get(rss_url, headers=headers, verify=False)
+        response.raise_for_status()
+        xml_content = response.content
+        
+        # 解析 Atom 格式 XML
+        root = ET.fromstring(xml_content)
+        # Atom namespaces
+        ns = {'atom': 'http://www.w3.org/2005/Atom'}
+        
+        entries = root.findall('atom:entry', ns)
+        news_list = []
+        
+        for entry in entries:
+            title_elem = entry.find('atom:title', ns)
+            link_elem = entry.find('atom:link', ns)
+            summary_elem = entry.find('atom:summary', ns)
+            updated_elem = entry.find('atom:updated', ns)
+            
+            title = title_elem.text.strip() if title_elem is not None and title_elem.text else "無標題"
+            link = link_elem.attrib.get('href', '').strip() if link_elem is not None else ""
+            summary = summary_elem.text.strip() if summary_elem is not None and summary_elem.text else ""
+            updated = updated_elem.text.strip() if updated_elem is not None and updated_elem.text else ""
+            
+            # 簡單過濾 summary 裡的 HTML tag (如果有)
+            if summary:
+                summary = BeautifulSoup(summary, 'html.parser').get_text()
+                
+            news_list.append({
+                "title": title,
+                "link": link,
+                "summary": summary,
+                "updated": updated
+            })
+            
+        return news_list
+        
+    except Exception as e:
+        print(f"抓取 RSS 列表發生錯誤: {e}")
+        return []
+
 def fetch_article_content(article_url):
     """
     抓取文章連結網頁，解析 JSON-LD (NewsArticle) 以取得內文、作者與分類
