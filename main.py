@@ -13,7 +13,7 @@ load_dotenv()
 
 TARGET_CHANNEL_ID = 1516009893616681043  # Discord 目標頻道 ID
 DISCORD_TOKEN = os.getenv("Discord")
-DISCORD_MAX_LENGTH = 1950  # Discord 單條訊息字數上限設定為 1950 (保留 50 字元作為安全裕度)
+DISCORD_MAX_LENGTH = 1950  # Discord 單條訊息字數上限設定為 1950
 
 class NewsBotClient(discord.Client):
     def __init__(self, final_message, prepared_items, *args, **kwargs):
@@ -113,14 +113,15 @@ async def main():
         else:
             body_content = news["summary"]
             
-        # B. 透過 Ollama 本地 Qwen3 模型進行特殊口吻標題轉換
-        transformed_title = title_transformer.transform_title(title)
-        print(f"[Main] 標題轉換成功 -> 原標題: {title} | 新標題: {transformed_title}")
-        
-        # C. 透過 Mistral 生成摘要 (內建 Rate Limit 與 429 退避重試機制)
+        # B. 先透過 Mistral 生成摘要 (內建 Rate Limit 與 429 退避重試機制)
+        # 因為黃山料標題轉換 Prompt 需要新聞摘要作為上下文輸入
         summary = ai_summarizer.generate_summary(title, body_content)
         
-        # D. 格式化為精簡版面 (不含 > 與 ---，字體正常，並使用列表精簡排版)
+        # C. 透過 Ollama 本地 Qwen3 模型進行特殊口吻標題轉換 (傳入標題與生成的摘要)
+        transformed_title = title_transformer.transform_title(title, summary)
+        print(f"[Main] 標題轉換成功 -> 原標題: {title} | 新標題: {transformed_title}")
+        
+        # D. 格式化為精簡版面
         category_text = category if category else "一般新聞"
         formatted_time = news["updated"].replace('T', ' ').split('+')[0] if news["updated"] else "未知時間"
         
