@@ -65,6 +65,24 @@ BLACK_LIST_CATEGORIES = {
 file_lock = threading.Lock()
 progress_lock = threading.Lock()
 processed_ids = set()
+
+# 全域發送防撞守門人 (用於策略 C)
+global_emit_lock = threading.Lock()
+last_emit_time = 0.0
+MIN_EMIT_GAP = 2.5  # 確保任意兩個發送間隔至少 2.5 秒，以避開 1 RPS 限制
+
+def acquire_emit_token():
+    """線程安全地獲取發送許可，若間隔過近則主動等待"""
+    global last_emit_time
+    with global_emit_lock:
+        now = time.time()
+        time_since_last = now - last_emit_time
+        if time_since_last < MIN_EMIT_GAP:
+            wait_time = MIN_EMIT_GAP - time_since_last
+            time.sleep(wait_time)
+            last_emit_time = time.time()
+        else:
+            last_emit_time = now
 done_count = 0
 initial_done = 0
 start_time = 0.0
@@ -140,7 +158,7 @@ def call_mistral_api(article_body, key_info):
         }
         
         try:
-            response = requests.post(MISTRAL_URL, headers=headers, json=data, timeout=30)
+            response = requests.post(MISTRAL_URL, headers=headers, json=data, timeout=60)
             
             if response.status_code == 200:
                 result = response.json()
@@ -164,6 +182,11 @@ def call_mistral_api(article_body, key_info):
                 active_cnt = get_active_keys_count()
                 total_keys = len(MISTRAL_KEYS)
                 print(f"\n[WARNING] 金鑰 {key_info['name']} 遇到錯誤 (代碼: {response.status_code})。冷卻 30 秒！可用金鑰狀態: {active_cnt}/{total_keys}\n")
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout) as e:
+            # 超時異常單獨原地重試，不降低金鑰活躍狀態
+            print(f"\n[INFO] 金鑰 {key_info['name']} 請求超時 (Timeout)，將在 3 秒後原地重試，不觸發冷卻限制...\n")
+            time.sleep(3)
+            continue
         except Exception as e:
             key_info["cooldown_until"] = time.time() + 30
             active_cnt = get_active_keys_count()
@@ -201,6 +224,10 @@ def worker(key_info, news_queue, total_raw):
         except queue.Empty:
             break
             
+        # 發送前取得全域發送許可，確保任意兩個發送間隔至少 2.5 秒，避開 1 RPS 限制
+        acquire_emit_token()
+        
+        request_start = time.time()
         article_id = news["id"]
         headline = news["headline"]
         body = news["article_body"]
@@ -236,8 +263,10 @@ def worker(key_info, news_queue, total_raw):
             print(f"[PROGRESS] 摘要進度: {done_count}/{total_raw} 篇 ({percent:.2f}%) | 正在處理 ID {article_id} (標題: {clean_headline[:15]}...) | 速度: {speed_sec:.3f} 筆/秒 (每分鐘 {speed_min:.1f} 筆) | 金鑰狀態: {active_cnt}/{total_keys} 可用")
             
         news_queue.task_done()
-        # 該金鑰執行緒冷卻休眠，防止共享帳戶/IP撞到 Rate Limits
-        time.sleep(SLEEP_DELAY)
+        # 策略 C：固定計時週期 (扣除請求時間)，防止單一帳戶超出 5 RPM
+        elapsed_run = time.time() - request_start
+        if elapsed_run < SLEEP_DELAY:
+            time.sleep(SLEEP_DELAY - elapsed_run)
 
 def main():
     global done_count, processed_ids, initial_done, start_time
@@ -250,14 +279,18 @@ def main():
         processed_ids = load_processed_ids()
         
         raw_news = []
+        seen_ids = set()
         try:
             with open(RAW_NEWS_PATH, "r", encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
                         try:
                             data = json.loads(line)
-                            if is_traditional_chinese_news(data.get("headline"), data.get("article_body"), data.get("category")):
-                                raw_news.append(data)
+                            article_id = int(data.get("id"))
+                            if article_id not in seen_ids:
+                                if is_traditional_chinese_news(data.get("headline"), data.get("article_body"), data.get("category")):
+                                    seen_ids.add(article_id)
+                                    raw_news.append(data)
                         except:
                             pass
         except Exception as e:
