@@ -5,11 +5,12 @@ from dotenv import load_dotenv
 import rss_parser
 import db_manager
 import ai_summarizer
+import title_transformer
 
 # 載入環境變數
 load_dotenv()
 
-TARGET_CHANNEL_ID = 1516009893616681043  # Discord 目標頻道 ID
+TARGET_CHANNEL_ID = 1516390944231002173  # Discord 目標頻道 ID
 DISCORD_TOKEN = os.getenv("Discord")
 
 class NewsBotClient(discord.Client):
@@ -26,10 +27,11 @@ class NewsBotClient(discord.Client):
             await self.close()
             return
 
-        print(f"[Discord Bot] 開始依序發送 {len(self.news_to_send)} 篇新新聞摘要 (從較早的新聞開始)...")
+        print(f"[Discord Bot] 開始依序發送 {len(self.news_to_send)} 篇新新聞摘要 (雙模型協作，從較早的新聞開始)...")
         
         for news in self.news_to_send:
-            title = news["title"]
+            title = news["title"]                  # 轉換後的標題
+            original_title = news["original_title"]  # 原始標題
             link = news["link"]
             summary = news["summary"]
             updated = news["updated"]
@@ -37,13 +39,12 @@ class NewsBotClient(discord.Client):
             
             # 整理時間格式
             formatted_time = updated.replace('T', ' ').split('+')[0] if updated else "未知時間"
-            
-            # 若無分類，則標示為「一般新聞」
             category_text = category if category else "一般新聞"
             
-            # 美化的 Markdown 格式，加上「新聞分類」欄位
+            # 訊息排版：主標題採用轉換後口吻，並新增一欄顯示原始標題以便對照
             message_content = (
                 f"## 📰 **{title}**\n\n"
+                f"📝 **原始標題**：{original_title}\n"
                 f"🏷️ **新聞分類**：`{category_text}`\n"
                 f"🔗 **新聞連結**：<{link}>\n"
                 f"⏰ **發布時間**：`{formatted_time}`\n\n"
@@ -56,8 +57,8 @@ class NewsBotClient(discord.Client):
                 print(f"[Discord Bot] 正在發送《{title}》...")
                 await channel.send(message_content)
                 
-                # 發送成功後，寫入資料庫
-                db_manager.insert_news(title, link, summary, updated)
+                # 發送成功後，將原始新聞標題與連結存入資料庫做排重
+                db_manager.insert_news(original_title, link, summary, updated)
                 
                 # 稍微等待 1.5 秒，避免 Discord 頻率限制
                 await asyncio.sleep(1.5)
@@ -92,18 +93,17 @@ async def main():
         
     print(f"[Main] 發現 {len(new_news_list)} 篇未處理的新新聞。")
     
-    # 【不遺漏新聞】我們不再限制處理篇數，而是將所有抓取到且未處理的新新聞全部納入處理。
-    # 同時對列表進行反轉 (reverse)，使時間較舊的新聞先被處理與發布。
+    # 時間較舊的新聞先被處理與發布
     new_news_list.reverse()
     
-    # 4. 對每篇新新聞進行內文抓取與摘要生成
+    # 4. 對每篇新新聞進行雙模型協作處理 (Mistral Large 摘要 + Ollama Qwen3 標題轉換)
     prepared_news = []
     for idx, news in enumerate(new_news_list, 1):
         title = news["title"]
         link = news["link"]
         print(f"\n[Main] ({idx}/{len(new_news_list)}) 正在處理: {title}")
         
-        # 抓取詳細網頁內文與分類資訊
+        # A. 抓取詳細網頁內文與分類資訊
         details = rss_parser.fetch_article_content(link)
         body_content = ""
         category = ""
@@ -114,11 +114,16 @@ async def main():
         else:
             body_content = news["summary"]
             
-        # 透過 Mistral 生成摘要 (內建 Rate Limit 延遲 15 秒)
+        # B. 透過 Ollama 本地 Qwen3 模型進行特殊口吻標題轉換
+        transformed_title = title_transformer.transform_title(title)
+        print(f"[Main] 標題轉換成功 -> 原標題: {title} | 新標題: {transformed_title}")
+        
+        # C. 透過 Mistral 生成摘要 (內建 Rate Limit 延遲 15 秒)
         summary = ai_summarizer.generate_summary(title, body_content)
         
         prepared_news.append({
-            "title": title,
+            "original_title": title,
+            "title": transformed_title,
             "link": link,
             "summary": summary,
             "updated": news["updated"],
