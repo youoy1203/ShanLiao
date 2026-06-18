@@ -55,7 +55,7 @@ class NewsBotClient(discord.Client):
                     f"### 📰 **{title}**\n"
                     f"* 原始標題：{original_title}\n"
                     f"* 分類：`{category_text}` ｜ 連結：<{link}> ｜ 時間：`{formatted_time}`\n"
-                    f"* **AI 摘要**：{summary}"
+                    f"* **摘要**：{summary}"
                 )
                 
                 print(f"[Discord Bot] 正在發送 ({idx + 1}/{len(self.news_to_send)}): 《{title}》...")
