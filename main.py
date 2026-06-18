@@ -13,13 +13,12 @@ load_dotenv()
 
 TARGET_CHANNEL_ID = 1516009893616681043  # Discord 目標頻道 ID
 DISCORD_TOKEN = os.getenv("Discord")
-DISCORD_MAX_LENGTH = 1950  # Discord 單條訊息字數上限設定為 1950
 
 class NewsBotClient(discord.Client):
-    def __init__(self, final_message, prepared_items, *args, **kwargs):
+    def __init__(self, header, news_to_send, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.final_message = final_message
-        self.prepared_items = prepared_items
+        self.header = header
+        self.news_to_send = news_to_send
 
     async def on_ready(self):
         print(f"[Discord Bot] 機器人已成功登入: {self.user}")
@@ -30,20 +29,51 @@ class NewsBotClient(discord.Client):
             await self.close()
             return
 
-        print(f"[Discord Bot] 正在發送合併後的快報訊息 (共 {len(self.prepared_items)} 篇報導)...")
-        
         try:
-            # 單次發送所有新聞打包後的訊息
-            await channel.send(self.final_message)
-            print("[Discord Bot] 快報發送成功！")
+            # 1. 先單獨發送一次當前日期與屬於什麼時段的新聞大標題
+            print(f"[Discord Bot] 正在發送大標題: {self.header.strip()}")
+            await channel.send(self.header)
+            await asyncio.sleep(1.5)
             
-            # 發送成功後，才將這些已成功發送的新聞寫入資料庫
-            print("[Discord Bot] 正在將已發送新聞寫入資料庫做排重...")
-            for news in self.prepared_items:
-                db_manager.insert_news(news["original_title"], news["link"], news["summary"], news["updated"])
+            print(f"[Discord Bot] 開始依序發送 {len(self.news_to_send)} 篇獨立新聞訊息...")
+            
+            # 2. 每一篇新聞獨立發送一則訊息，並用空格/空行間隔每一則訊息
+            for idx, news in enumerate(self.news_to_send):
+                title = news["title"]
+                original_title = news["original_title"]
+                link = news["link"]
+                summary = news["summary"]
+                updated = news["updated"]
+                category = news["category"]
                 
+                # 整理時間與分類
+                formatted_time = updated.replace('T', ' ').split('+')[0] if updated else "未知時間"
+                category_text = category if category else "一般新聞"
+                
+                # 精簡版面 Markdown
+                message_content = (
+                    f"### 📰 **{title}**\n"
+                    f"* 原始標題：{original_title}\n"
+                    f"* 分類：`{category_text}` ｜ 連結：<{link}> ｜ 時間：`{formatted_time}`\n"
+                    f"* **AI 摘要**：{summary}"
+                )
+                
+                print(f"[Discord Bot] 正在發送 ({idx + 1}/{len(self.news_to_send)}): 《{title}》...")
+                await channel.send(message_content)
+                
+                # 發送成功後立即寫入資料庫，確保排重安全
+                db_manager.insert_news(original_title, link, summary, updated)
+                await asyncio.sleep(1.5)
+                
+                # 用空格 (零寬度空格字元 \u200b) 間隔每一則獨立新聞訊息，製造乾淨的間距
+                if idx < len(self.news_to_send) - 1:
+                    await channel.send("\u200b")
+                    await asyncio.sleep(1.5)
+                    
+            print("[Discord Bot] 所有新聞獨立發送與資料庫寫入完成！")
+            
         except Exception as e:
-            print(f"[Discord Bot] 發送快報訊息失敗: {e}")
+            print(f"[Discord Bot] 執行發送過程出錯: {e}")
 
         print("[Discord Bot] 正在關閉機器人連線...")
         await self.close()
@@ -92,10 +122,10 @@ async def main():
     else:
         report_name = "深夜快報"
         
-    header = f"# 📅 {date_str} ｜ {report_name}\n\n"
+    header = f"# 📅 {date_str} ｜ {report_name}"
     
-    # 5. 處理新聞並進行字數長度控制
-    prepared_items = []
+    # 5. 處理所有新新聞，呼叫雙模型處理
+    prepared_news = []
     
     for idx, news in enumerate(new_news_list, 1):
         title = news["title"]
@@ -113,60 +143,34 @@ async def main():
         else:
             body_content = news["summary"]
             
-        # B. 先透過 Mistral 生成摘要 (內建 Rate Limit 與 429 退避重試機制)
-        # 因為黃山料標題轉換 Prompt 需要新聞摘要作為上下文輸入
+        # B. 透過 Mistral 生成摘要 (內建 Rate Limit 與 429 退避重試機制)
         summary = ai_summarizer.generate_summary(title, body_content)
         
-        # C. 透過 Ollama 本地 Qwen3 模型進行特殊口吻標題轉換 (傳入標題與生成的摘要)
+        # C. 透過 Ollama 本地 shanliao-qwen 模型進行特殊口吻標題轉換
         transformed_title = title_transformer.transform_title(title, summary)
         print(f"[Main] 標題轉換成功 -> 原標題: {title} | 新標題: {transformed_title}")
         
-        # D. 格式化為精簡版面
-        category_text = category if category else "一般新聞"
-        formatted_time = news["updated"].replace('T', ' ').split('+')[0] if news["updated"] else "未知時間"
-        
-        item_md = (
-            f"### 📰 **{transformed_title}**\n"
-            f"* 原始標題：{title}\n"
-            f"* 分類：`{category_text}` ｜ 連結：<{link}> ｜ 時間：`{formatted_time}`\n"
-            f"* **AI 摘要**：{summary}\n\n"
-        )
-        
-        # E. 計算加上這一篇後是否會超出 Discord 字數上限
-        current_md_list = [item["md"] for item in prepared_items]
-        test_message = header + "".join(current_md_list) + item_md
-        
-        if len(test_message) > DISCORD_MAX_LENGTH:
-            print(f"\n[Main] 警告: 加上此篇報導後總字數為 {len(test_message)}，超出了 Discord 的 {DISCORD_MAX_LENGTH} 字上限限制！")
-            print(f"[Main] 將此篇《{title}》以及後續所有未處理報導挪至下一次發送。")
-            break  # 終止處理後續新聞，保留給下次執行
-            
-        # F. 未超出長度，加入準備發送列表
-        prepared_items.append({
-            "md": item_md,
+        prepared_news.append({
             "original_title": title,
+            "title": transformed_title,
             "link": link,
             "summary": summary,
-            "updated": news["updated"]
+            "updated": news["updated"],
+            "category": category
         })
         
-    # 6. 組裝 final_message 並啟動 Discord Bot
-    if prepared_items:
-        final_message = header + "".join(item["md"] for item in prepared_items)
-        print(f"\n[Main] 合併後快報總字數：{len(final_message)} 字元")
-        print("[Main] 正在啟動 Discord 機器人合併發送...")
-        
+    # 6. 啟動 Discord Bot 發送新新聞摘要
+    if prepared_news:
+        print(f"\n[Main] 正在啟動 Discord 機器人發送 {len(prepared_news)} 篇新新聞...")
         intents = discord.Intents.default()
         intents.message_content = True
         
-        client = NewsBotClient(final_message=final_message, prepared_items=prepared_items, intents=intents)
+        client = NewsBotClient(header=header, news_to_send=prepared_news, intents=intents)
         
         try:
             await client.start(DISCORD_TOKEN)
         except Exception as e:
             print(f"[Main] Discord 機器人執行出錯: {e}")
-    else:
-        print("\n[Main] 沒有可供發送的新聞項目。")
             
     print("\n[Main] 任務執行結束。")
 

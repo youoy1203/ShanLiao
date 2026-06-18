@@ -59,35 +59,35 @@ def get_ollama_base_url():
 
 def get_available_qwen_model(base_url):
     """
-    查詢 Ollama 上可用的 Qwen 模型，優先匹配 qwen3:1.7b 或 qwen3.5:2b 等
+    查詢 Ollama 上可用的 Qwen 模型，優先匹配 shanliao-qwen
     """
-    default_model = "qwen3:1.7b"
+    default_model = "shanliao-qwen"
     try:
         response = requests.get(f"{base_url}/api/tags", timeout=1.5)
         if response.status_code == 200:
             models_info = response.json().get("models", [])
             model_names = [m.get("name") for m in models_info]
             
-            # 1. 精準匹配使用者提到的模型 (例如 qwen3:1.7b)
+            # 1. 精準匹配 shanliao-qwen
             if default_model in model_names:
                 return default_model
                 
-            # 2. 匹配名稱中含有 qwen3 且帶有 1.7b / 2b / 1.5b 的模型
+            # 2. 優先匹配包含 shanliao 的任何模型
+            for name in model_names:
+                if "shanliao" in name.lower():
+                    return name
+            
+            # 3. 匹配名稱中含有 qwen3 且帶有 1.7b / 2b / 1.5b 的模型
             for name in model_names:
                 if "qwen3" in name.lower() and ("1.7b" in name or "2b" in name or "1.5b" in name):
                     return name
             
-            # 3. 匹配先前偵測到的 qwen3.5:2b 或是 qwen3.5:9b
+            # 4. 匹配先前偵測到的 qwen3.5:2b 或是 qwen3.5:9b
             for name in model_names:
                 if "qwen3.5" in name:
                     return name
                     
-            # 4. 匹配任何包含 qwen3 的模型
-            for name in model_names:
-                if "qwen3" in name.lower():
-                    return name
-                    
-            # 5. 匹配任何 qwen 模型
+            # 5. 匹配任何包含 qwen 的模型
             for name in model_names:
                 if "qwen" in name.lower():
                     return name
@@ -123,7 +123,7 @@ def transform_title(original_title, summary):
         "stream": False,
         "options": {
             "temperature": 0.3,      # 低溫確保模型遵守去實體化與長度限制
-            "num_predict": 1024,     # 給予充足 token 以利 Qwen3 思考模型完成推理並輸出
+            "num_predict": 1024,     # 給予充足 token 以利思考模型完成推理並輸出
             "stop": ["<|im_end|>"]   # 僅採用 stop token 結束，避免 \n 在開頭截斷
         }
     }
