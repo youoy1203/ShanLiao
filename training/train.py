@@ -69,7 +69,7 @@ print("正在載入資料集...")
 if not os.path.exists(TRAIN_FILE):
     raise FileNotFoundError(f"找不到訓練集檔案 {TRAIN_FILE}，請先執行 prepare_dataset.py")
 
-dataset = load_dataset("json", data_files={"train": TRAIN_FILE, "eval": EVAL_FILE})
+dataset = load_dataset("json", data_files={"train": TRAIN_FILE})
 dataset = dataset.map(format_prompts, batched=True)
 
 # ================= 4. 設定訓練超參數 =================
@@ -88,8 +88,6 @@ training_args = TrainingArguments(
     lr_scheduler_type = "linear",
     seed = 3407,
     output_dir = OUTPUT_DIR,
-    evaluation_strategy = "steps",
-    eval_steps = 100,                  # 調整為每 100 步評估一次
     save_strategy = "steps",
     save_steps = 200,                  # 調整為每 200 步存檔一次
     report_to = "none",                # 停用 wandb 等第三方回報
@@ -101,7 +99,6 @@ trainer = SFTTrainer(
     model = model,
     tokenizer = tokenizer,
     train_dataset = dataset["train"],
-    eval_dataset = dataset["eval"],
     dataset_text_field = "text",
     max_seq_length = MAX_SEQ_LENGTH,
     dataset_num_proc = 2,

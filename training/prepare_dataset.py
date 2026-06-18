@@ -20,14 +20,16 @@ def load_transformed_news():
             if line.strip():
                 try:
                     data = json.loads(line)
-                    # 確保必要欄位存在
-                    if "summary" in data and "shanliao_title" in data:
+                    # 確保必要欄位存在，包含原始標題 (headline)、摘要 (summary) 和風格標題 (shanliao_title)
+                    if "headline" in data and "summary" in data and "shanliao_title" in data:
+                        headline = data["headline"].strip()
                         summary = data["summary"].strip()
                         title = data["shanliao_title"].strip()
                         
                         # 進行基礎品質過濾
                         if len(summary) > 20 and len(title) >= 10:
                             valid_data.append({
+                                "headline": headline,
                                 "summary": summary,
                                 "shanliao_title": title
                             })
@@ -35,17 +37,17 @@ def load_transformed_news():
                     print(f"解析 JSON 失敗: {e}")
     return valid_data
 
-def convert_to_sharegpt(summary, title):
-    """將單筆資料轉換為 ShareGPT 格式"""
+def convert_to_sharegpt(headline, summary, title):
+    """將單筆資料轉換為 ShareGPT 格式 (將指令放在 system，數據放在 user)"""
     return {
         "conversations": [
             {
                 "role": "system",
-                "content": "你是一位擅長將新聞摘要轉化為療癒系短標題的文青作家。"
+                "content": "你是一位擅長寫療癒系散文的作家（筆名黃山料）。請閱讀使用者提供的原始標題與新聞摘要，將其轉化為一句 25 ~ 40 字、去實體化且符合情感投射的黃山料風格標題。"
             },
             {
                 "role": "user",
-                "content": f"請將以下新聞摘要轉化為一句25字以內的山料風格標題：\n\n{summary}"
+                "content": f"【原始標題】：{headline}\n【新聞摘要】：{summary}"
             },
             {
                 "role": "assistant",
@@ -66,30 +68,24 @@ def main():
     # 打包為 ShareGPT 格式
     sharegpt_dataset = []
     for item in raw_data:
-        sharegpt_item = convert_to_sharegpt(item["summary"], item["shanliao_title"])
+        sharegpt_item = convert_to_sharegpt(item["headline"], item["summary"], item["shanliao_title"])
         sharegpt_dataset.append(sharegpt_item)
         
     # 隨機打亂資料
     random.seed(42)
     random.shuffle(sharegpt_dataset)
     
-    # 分割資料集 (90% train, 10% eval)
-    split_index = int(total_count * 0.9)
-    train_set = sharegpt_dataset[:split_index]
-    eval_set = sharegpt_dataset[split_index:]
+    # 100% 資料全部作為訓練集
+    train_set = sharegpt_dataset
     
-    print(f"資料集分割完成：")
+    print(f"資料打包完成：")
     print(f"- 訓練集 (train.json): {len(train_set)} 筆")
-    print(f"- 驗證集 (eval.json): {len(eval_set)} 筆")
     
     # 寫入檔案
     with open(TRAIN_DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(train_set, f, ensure_ascii=False, indent=2)
         
-    with open(EVAL_DATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(eval_set, f, ensure_ascii=False, indent=2)
-        
-    print(f"成功儲存資料集至 {DATA_DIR} 目錄！")
+    print(f"成功儲存訓練集至 {DATA_DIR} 目錄！")
 
 if __name__ == "__main__":
     main()
