@@ -7,7 +7,7 @@ from unsloth import FastLanguageModel
 
 # ================= 參數設定 =================
 MAX_SEQ_LENGTH = 512
-MODEL_NAME = "unsloth/Qwen2.5-1.5B-Instruct-bnb-4bit" # 預設使用 Qwen2.5 1.5B，可根據需要更換為 Qwen3 (若 Unsloth 支援)
+MODEL_NAME = "unsloth/Qwen3-1.7B-Instruct-bnb-4bit" # 使用者指定的 Qwen3 1.7B Instruct 4-bit 量化模型
 # 基於目前檔案路徑動態取得專案根目錄，防範執行路徑不同帶來的問題
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
@@ -19,6 +19,9 @@ LORA_OUTPUT_DIR = os.path.join(OUTPUT_DIR, "lora_adapter")
 GGUF_OUTPUT_DIR = os.path.join(OUTPUT_DIR, "gguf_model")
 
 # ================= 1. 載入模型與分詞器 =================
+# 限制該 PyTorch 進程最多僅能使用 70% 的 GPU 顯存 (預留顯存給宿主機其他應用)
+torch.cuda.set_per_process_memory_fraction(0.7, 0)
+print("已設定 GPU 顯存上限為 70% (約 11.4 GB)")
 print("正在載入 4-bit 量化基座模型...")
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = MODEL_NAME,
