@@ -1,13 +1,52 @@
 import os
+import sys
+
+# 自訂自動 flush 的 Writer 包裝類別，保證日誌在非 tty 環境下能即時寫入
+class UnbufferedWriter:
+    def __init__(self, stream):
+        self.stream = stream
+    def write(self, data):
+        self.stream.write(data)
+        self.stream.flush()
+    def writelines(self, datas):
+        self.stream.writelines(datas)
+        self.stream.flush()
+    def __getattr__(self, attr):
+        return getattr(self.stream, attr)
+
+# 重新導向 stdout/stderr 至專案根目錄的 training.log
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
+log_file = open(os.path.join(PROJECT_DIR, "training.log"), "w", encoding="utf-8")
+sys.stdout = UnbufferedWriter(log_file)
+sys.stderr = sys.stdout
+print("重導向初始化成功！開始載入深度學習庫...")
+
 import torch
-from datasets import load_dataset
-from trl import SFTTrainer
-from transformers import TrainingArguments
+import uuid
+import datasets.fingerprint
+import datasets.arrow_dataset
+
+# 猴子補丁：繞過 Python 3.14 下 HuggingFace datasets 的 dill/pickle 序列化崩潰 Bug
+def dummy_generate_fingerprint(*args, **kwargs):
+    return uuid.uuid4().hex
+
+datasets.fingerprint.generate_fingerprint = dummy_generate_fingerprint
+datasets.arrow_dataset.generate_fingerprint = dummy_generate_fingerprint
+
+# 猴子補丁：強制禁用 Dataset.map 的多進程，防止 TRL 內部多進程序列化 ConfigModuleInstance 崩潰
+original_map = datasets.arrow_dataset.Dataset.map
+def safe_map(self, *args, **kwargs):
+    kwargs["num_proc"] = None
+    return original_map(self, *args, **kwargs)
+datasets.arrow_dataset.Dataset.map = safe_map
+
+from trl import SFTTrainer, SFTConfig
 from unsloth import FastLanguageModel
 
 # ================= 參數設定 =================
 MAX_SEQ_LENGTH = 512
-MODEL_NAME = "unsloth/Qwen3-1.7B-Instruct-bnb-4bit" # 使用者指定的 Qwen3 1.7B Instruct 4-bit 量化模型
+MODEL_NAME = "unsloth/Qwen3-1.7B-unsloth-bnb-4bit" # Unsloth 官方 Qwen3 1.7B 4-bit 量化模型
 # 基於目前檔案路徑動態取得專案根目錄，防範執行路徑不同帶來的問題
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
@@ -62,21 +101,29 @@ tokenizer = get_chat_template(
     },
 )
 
-def format_prompts(examples):
-    # examples["conversations"] 包含 ShareGPT 格式資料
-    conversations = examples["conversations"]
-    texts = [tokenizer.apply_chat_template(convo, tokenize=False, add_generation_prompt=False) for convo in conversations]
-    return { "text" : texts }
+# 新增特殊 token 以應付新版 TRL 的 vocab 檢驗，防止 ValueError
+tokenizer.add_tokens(["<EOS_TOKEN>", "<PAD_TOKEN>"])
+tokenizer.eos_token = "<EOS_TOKEN>"
+tokenizer.pad_token = "<PAD_TOKEN>"
+
+import json
+from datasets import Dataset
 
 print("正在載入資料集...")
 if not os.path.exists(TRAIN_FILE):
     raise FileNotFoundError(f"找不到訓練集檔案 {TRAIN_FILE}，請先執行 prepare_dataset.py")
 
-dataset = load_dataset("json", data_files={"train": TRAIN_FILE})
-dataset = dataset.map(format_prompts, batched=True)
+with open(TRAIN_FILE, "r", encoding="utf-8") as f:
+    raw_data = json.load(f)
+
+print("正在套用 ChatML 對話模板...")
+texts = [tokenizer.apply_chat_template(item["conversations"], tokenize=False, add_generation_prompt=False) for item in raw_data]
+
+# 繞過 Hugging Face 的 load_dataset builder 序列化，直接從記憶體建立 Dataset 物件，解決 Python 3.14 的 dill/pickle 崩潰問題
+dataset = Dataset.from_dict({"text": texts})
 
 # ================= 4. 設定訓練超參數 =================
-training_args = TrainingArguments(
+training_args = SFTConfig(
     per_device_train_batch_size = 4,   # 提升為 4 (充分利用 16GB 顯存)
     gradient_accumulation_steps = 2,   # 等效 batch size = 8 (4 * 2)
     warmup_steps = 10,
@@ -94,18 +141,20 @@ training_args = TrainingArguments(
     save_strategy = "steps",
     save_steps = 200,                  # 調整為每 200 步存檔一次
     report_to = "none",                # 停用 wandb 等第三方回報
+    max_length = MAX_SEQ_LENGTH,       # 修正為新版 SFTConfig 的 max_length
+    dataset_num_proc = 1,              # 強制單進程，防止 datasets 庫在多進程序列化時因 ConfigModuleInstance 崩潰
+    packing = False,                   # 對於短句，packing 設為 False 較好，移入 SFTConfig
+    eos_token = "<|im_end|>",          # 強制指定 Qwen/ChatML 的結束 token，防 TRL 檢查報錯
+    pad_token = "<|endoftext|>",        # 強制指定 Qwen 的 pad token，防 TRL 檢查報錯
+    use_liger_kernel = True,           # 啟用 Liger Kernel 優化，避開新版 TRL 對 logits 存取產生的相容性崩潰 Bug
 )
 
 # ================= 5. 開始訓練 =================
 print("開始進行 SFT (Supervised Fine-Tuning) 微調...")
 trainer = SFTTrainer(
     model = model,
-    tokenizer = tokenizer,
-    train_dataset = dataset["train"],
-    dataset_text_field = "text",
-    max_seq_length = MAX_SEQ_LENGTH,
-    dataset_num_proc = 2,
-    packing = False,                   # 對於短句，packing 設為 False 較好
+    processing_class = tokenizer,
+    train_dataset = dataset,
     args = training_args,
 )
 

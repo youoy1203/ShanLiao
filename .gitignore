@@ -2,3 +2,8 @@
 /__pycache__
 /unsloth_compiled_cache
 .env
+/venv_linux
+/venv_linux_312
+/outputs/*
+!/outputs/gguf_model_gguf/
+/outputs/gguf_model_gguf/*.gguf
