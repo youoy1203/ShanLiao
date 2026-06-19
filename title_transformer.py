@@ -51,6 +51,33 @@ def get_available_qwen_model(base_url):
         
     return default_model
 
+def warm_up(base_url=None, model_name=None):
+    """
+    預先向 Ollama 發送加載模型請求，使其預載到記憶體中。
+    防範首篇新聞因模型載入過久導致超時 (Timeout) 而無法轉換標題的問題。
+    """
+    if not base_url:
+        base_url = get_ollama_base_url()
+    if not model_name:
+        model_name = get_available_qwen_model(base_url)
+        
+    url = f"{base_url}/api/generate"
+    payload = {
+        "model": model_name
+    }
+    
+    print(f"[Title Transformer] 開始預載 Ollama 模型: {model_name}...")
+    for attempt in range(1, 4):
+        try:
+            # 給予充足的 90 秒載入超時
+            response = requests.post(url, json=payload, timeout=90)
+            if response.status_code == 200:
+                print(f"[Title Transformer] 模型 {model_name} 載入成功！")
+                return True
+        except Exception as e:
+            print(f"[Title Transformer] 第 {attempt} 次模型載入嘗試失敗: {e}")
+    return False
+
 def transform_title(original_title, summary):
     """
     調用本地 Ollama 模型，將新聞標題與摘要轉換為「黃山料腔調」的去實體化療癒金句標題
@@ -80,45 +107,49 @@ def transform_title(original_title, summary):
         }
     }
     
-    try:
-        response = requests.post(url, json=payload, timeout=45)
-        response.raise_for_status()
-        
-        result = response.json()
-        transformed = result.get("message", {}).get("content", "").strip()
-        
-        # 備用防護：針對某些思考模型
-        if not transformed:
-            thinking = result.get("message", {}).get("thinking", "").strip()
-            if thinking:
-                lines = [line.strip() for line in thinking.split('\n') if line.strip()]
-                for line in reversed(lines):
-                    if len(line) > 10 and not line.startswith("Let") and not line.startswith("Draft") and not line.startswith("Wait"):
-                        transformed = line
-                        break
-        
-        if transformed:
-            # 優先提取書名號《》、雙引號「」內的標題內容
-            match = re.search(r"[《\"'「『](.*?)[》\"'」』]", transformed)
-            if match:
-                transformed = match.group(1).strip()
-            else:
-                # 否則截取換行符前第一行
-                transformed = transformed.split('\n')[0].strip()
-                
-            # 去除可能殘留的首尾書名號與引號
-            transformed = re.sub(r'^[《"\'「『]|[》"\'」』]$', '', transformed).strip()
+    # 加入重試機制
+    for attempt in range(1, 4):
+        try:
+            # 調高 timeout 至 90 秒，給予思考模型與載入程序充足的時間
+            response = requests.post(url, json=payload, timeout=90)
+            response.raise_for_status()
             
-            # 去除常見的 AI 囉嗦引導詞
-            unwanted_prefixes = ["轉換後的標題", "社群風標題", "吸睛標題", "標題：", "標題"]
-            for prefix in unwanted_prefixes:
-                if transformed.startswith(prefix):
-                    transformed = re.sub(rf"^{prefix}[:：\s]*", "", transformed)
+            result = response.json()
+            transformed = result.get("message", {}).get("content", "").strip()
+            
+            # 備用防護：針對某些思考模型
+            if not transformed:
+                thinking = result.get("message", {}).get("thinking", "").strip()
+                if thinking:
+                    lines = [line.strip() for line in thinking.split('\n') if line.strip()]
+                    for line in reversed(lines):
+                        if len(line) > 10 and not line.startswith("Let") and not line.startswith("Draft") and not line.startswith("Wait"):
+                            transformed = line
+                            break
+            
+            if transformed:
+                # 優先提取書名號《》、雙引號「」內的標題內容
+                match = re.search(r"[《\"'「『](.*?)[》\"'」』]", transformed)
+                if match:
+                    transformed = match.group(1).strip()
+                else:
+                    # 否則截取換行符前第一行
+                    transformed = transformed.split('\n')[0].strip()
                     
-        return transformed if transformed else original_title
-    except Exception as e:
-        print(f"[Title Transformer] 轉換標題失敗: {e}")
-        return original_title
+                # 去除可能殘留的首尾書名號與引號
+                transformed = re.sub(r'^[《"\'「『]|[》"\'」』]$', '', transformed).strip()
+                
+                # 去除常見的 AI 囉嗦引導詞
+                unwanted_prefixes = ["轉換後的標題", "社群風標題", "吸睛標題", "標題：", "標題"]
+                for prefix in unwanted_prefixes:
+                    if transformed.startswith(prefix):
+                        transformed = re.sub(rf"^{prefix}[:：\s]*", "", transformed)
+                        
+            return transformed if transformed else original_title
+        except Exception as e:
+            print(f"[Title Transformer] 第 {attempt} 次轉換標題失敗: {e}")
+            if attempt == 3:
+                return original_title
 
 if __name__ == "__main__":
     test_title = "Threads、IG帳號停權災情 Meta：技術錯誤、積極修復"

@@ -126,6 +126,10 @@ async def main():
     # 5. 處理所有新新聞，呼叫雙模型處理
     prepared_news = []
     
+    # 預載/暖機 Ollama 模型，防止首篇新聞因模型載入過慢而處理超時
+    if new_news_list:
+        title_transformer.warm_up()
+        
     for idx, news in enumerate(new_news_list, 1):
         title = news["title"]
         link = news["link"]
