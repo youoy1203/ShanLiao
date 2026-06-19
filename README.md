@@ -75,7 +75,7 @@ pip install -r requirements.txt
 
 ### 4. 設定自動化排程 (Cron)
 
-若要讓樹莓派每小時自動抓取新新聞、生成摘要並發送到 Discord：
+若要讓樹莓派每天在 **早上 8:00、中午 12:00、晚上 18:00、半夜 00:00 (24:00)** 自動啟動程式，抓取未處理的新聞、生成摘要並發送到 Discord：
 
 1. 開啟排程編輯器：
    ```bash
@@ -83,5 +83,6 @@ pip install -r requirements.txt
    ```
 2. 在最下方加入以下設定（請將 `/home/pi/ShanLiao` 替換為您在樹莓派上的實際專案路徑）：
    ```bash
-   0 * * * * cd /home/pi/ShanLiao && python3 main.py >> cron.log 2>&1
+   # 每天 00:00、08:00、12:00、18:00 自動啟動
+   0 0,8,12,18 * * * cd /home/pi/ShanLiao && python3 main.py >> cron.log 2>&1
    ```
