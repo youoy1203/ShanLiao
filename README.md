@@ -69,9 +69,9 @@ pip install -r requirements.txt
    ollama run shanliao-qwen
    ```
 
-### 3. 本地探測機制 (Localhost Detection)
+### 3. 本機預設連線 (Localhost Connection)
 
-本專案的 `title_transformer.py` 內建**自動本機探測**。當程式與 Ollama 同時運行於樹莓派時，程式會在 `0.1秒` 內自動檢測並連上樹莓派本機的 `http://localhost:11434` Ollama 服務，無需進行複雜的網路或網卡設定，實現完全的「開箱即用」。
+本專案預設會連線至樹莓派本機的 `http://localhost:11434`。若您的 Ollama 服務運行於其他 IP 或連接埠，可透過設定系統環境變數 `OLLAMA_BASE_URL`（例如：`export OLLAMA_BASE_URL=http://<你的IP>:11434`）來指定連線網址。
 
 ### 4. 設定自動化排程 (Cron)
 

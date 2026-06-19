@@ -5,57 +5,9 @@ import requests
 
 def get_ollama_base_url():
     """
-    動態探測 Ollama 服務的 Base URL
+    獲取 Ollama 服務的 Base URL，優先使用環境變數 OLLAMA_BASE_URL，預設為 http://localhost:11434
     """
-    env_url = os.environ.get("OLLAMA_BASE_URL")
-    if env_url:
-        return env_url
-
-    # 嘗試本地 localhost
-    try:
-        response = requests.get("http://localhost:11434/api/tags", timeout=0.3)
-        if response.status_code == 200:
-            return "http://localhost:11434"
-    except Exception:
-        pass
-
-    # 解析 WSL2 閘道 (Gateway IP)
-    gateway_ip = None
-    try:
-        result = subprocess.run(
-            ["ip", "route", "show", "default"],
-            capture_output=True,
-            text=True,
-            timeout=1
-        )
-        if result.returncode == 0 and result.stdout:
-            match = re.search(r"via\s+([0-9\.]+)", result.stdout)
-            if match:
-                gateway_ip = match.group(1)
-    except Exception:
-        pass
-
-    if not gateway_ip:
-        try:
-            if os.path.exists("/etc/resolv.conf"):
-                with open("/etc/resolv.conf", "r") as f:
-                    content = f.read()
-                    match = re.search(r"nameserver\s+([0-9\.]+)", content)
-                    if match:
-                        gateway_ip = match.group(1)
-        except Exception:
-            pass
-
-    if gateway_ip:
-        target_url = f"http://{gateway_ip}:11434"
-        try:
-            response = requests.get(f"{target_url}/api/tags", timeout=0.5)
-            if response.status_code == 200:
-                return target_url
-        except Exception:
-            pass
-
-    return "http://localhost:11434"
+    return os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
 def get_available_qwen_model(base_url):
     """
