@@ -111,16 +111,15 @@ async def main():
     date_str = now.strftime("%Y/%m/%d")
     hour = now.hour
     
+    # 依據樹莓派排程啟動時間 (08:00, 12:00, 18:00, 00:00) 決定新聞時段大標題
     if 5 <= hour < 12:
-        report_name = "晨間快報"
-    elif 12 <= hour < 14:
-        report_name = "午間快報"
-    elif 14 <= hour < 18:
-        report_name = "下午快報"
-    elif 18 <= hour < 24:
-        report_name = "晚間快報"
+        report_name = "晨間新聞"    # 早上 8 點啟動落在這 (05:00 - 11:59)
+    elif 12 <= hour < 17:
+        report_name = "午間新聞"    # 中午 12 點啟動落在這 (12:00 - 16:59)
+    elif 17 <= hour < 22:
+        report_name = "晚間新聞"    # 晚上 6 點 (18:00) 啟動落在這 (17:00 - 21:59)
     else:
-        report_name = "深夜快報"
+        report_name = "深夜新聞"    # 半夜 12 點 (00:00) 啟動落在這 (22:00 - 04:59)
         
     header = f"# 📅 {date_str} ｜ {report_name}"
     
