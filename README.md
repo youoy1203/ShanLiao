@@ -40,10 +40,18 @@ Mistral=您的_Mistral_API_Key
 # 更新軟體源
 sudo apt-get update && sudo apt-get upgrade -y
 
-# 安裝 Python3 與 pip
+# 安裝 Python3 與 venv
 sudo apt-get install -y python3 python3-pip python3-venv
 
-# 複製專案代碼到樹莓派後，在專案目錄下安裝依賴：
+# 複製專案代碼到樹莓派後，在專案目錄下：
+# 1. 建立 Python 虛擬環境 (venv)
+python3 -m venv venv
+
+# 2. 啟用虛擬環境
+source venv/bin/activate
+
+# 3. 在虛擬環境中安裝依賴套件
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
@@ -83,6 +91,6 @@ pip install -r requirements.txt
    ```
 2. 在最下方加入以下設定（請將 `/home/pi/ShanLiao` 替換為您在樹莓派上的實際專案路徑）：
    ```bash
-   # 每天 08:00、12:00、18:00、23:00 自動啟動
-   0 8,12,18,23 * * * cd /home/pi/ShanLiao && python3 main.py >> cron.log 2>&1
-   ```
+    # 每天 08:00、12:00、18:00、23:00 自動啟動，並透過虛擬環境運行
+    0 8,12,18,23 * * * cd /home/pi/ShanLiao && /home/pi/ShanLiao/venv/bin/python3 main.py >> cron.log 2>&1
+    ```
