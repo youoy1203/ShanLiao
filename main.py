@@ -20,7 +20,8 @@ logging.basicConfig(
 # ==================================================================
 
 # 載入環境變數
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 TARGET_CHANNEL_ID = os.getenv("channel_id")  # Discord 目標頻道 ID
 # 如果環境變數讀出來是字串，轉換成 int 供 Discord API 使用
