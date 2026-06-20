@@ -11,7 +11,7 @@ import title_transformer
 # 載入環境變數
 load_dotenv()
 
-TARGET_CHANNEL_ID = 1516009893616681043  # Discord 目標頻道 ID
+TARGET_CHANNEL_ID = 1517449388086132986  # Discord 目標頻道 ID
 DISCORD_TOKEN = os.getenv("Discord")
 
 class NewsBotClient(discord.Client):
